@@ -1,16 +1,20 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 )
 
-var i int
-
 type ProcessDispatcher struct {
-	Status map[int]chan int
+	Status   map[int]chan int
+	Counters map[int]int
+}
+
+type HandleProcessResponse struct {
+	Id int `json:"id"`
 }
 
 func (s *ProcessDispatcher) Process(id int) {
@@ -19,8 +23,8 @@ func (s *ProcessDispatcher) Process(id int) {
 			select {
 			default:
 				time.Sleep(time.Second)
-				i++
-				fmt.Println(i)
+				s.Counters[id] = s.Counters[id] + 1
+				fmt.Println(s.Counters[id])
 
 			case <-s.Status[id]:
 				return
@@ -32,30 +36,56 @@ func (s *ProcessDispatcher) Process(id int) {
 func main() {
 
 	m := ProcessDispatcher{
-		Status: map[int]chan int{},
+		Status:   map[int]chan int{},
+		Counters: map[int]int{},
 	}
 
 	http.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
-		if m.Status[1] == nil {
-			m.Status[1] = make(chan int)
-			m.Process(1)
+		var payload HandleProcessResponse
+		err := json.NewDecoder(r.Body).Decode(&payload)
+
+		if err != nil {
+
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		if m.Status[payload.Id] == nil {
+			m.Status[payload.Id] = make(chan int)
+			m.Process(payload.Id)
+
+			w.WriteHeader(http.StatusOK)
 			return
 		} else {
-			w.Write([]byte("Don start"))
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("process has already been started"))
 			return
 		}
 
 	})
 
 	http.HandleFunc("/stop", func(w http.ResponseWriter, r *http.Request) {
-		if m.Status[1] == nil {
-			w.Write([]byte("Dont stop is null"))
+		var payload HandleProcessResponse
+		err := json.NewDecoder(r.Body).Decode(&payload)
+
+		if err != nil {
+
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(err.Error()))
+			return
+		}
+		if m.Status[payload.Id] == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("process has already been stopped"))
 			return
 		} else {
-			m.Status[1] <- 1
-			close(m.Status[1])
-			delete(m.Status, 1)
-			w.Write([]byte("Stopped"))
+			m.Status[payload.Id] <- 1
+			close(m.Status[payload.Id])
+			delete(m.Status, payload.Id)
+
+			w.WriteHeader(http.StatusOK)
+			return
 		}
 	})
 
